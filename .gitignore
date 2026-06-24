@@ -1,0 +1,33 @@
+# OS X
+.DS_Store
+
+# Xcode build files
+build/
+DerivedData/
+
+# User-specific Xcode files (open files, window layout, etc.)
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+xcuserdata/
+*.xcuserstate
+*.xcuserdata
+
+# Project workspaces
+project.xcworkspace/
+project.xcworkspace/xcuserdata/
+project.xcworkspace/contents.xcworkspacedata
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/
+fastlane/test_output
+
+# CocoaPods
+Pods/
