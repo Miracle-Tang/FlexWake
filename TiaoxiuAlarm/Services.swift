@@ -214,7 +214,7 @@ final class NotificationManager {
             let content = UNMutableNotificationContent()
             content.title = alarm.title
             content.body = alarm.reason(on: targetDate, customDates: customDates)
-            content.sound = .default
+            content.sound = UNNotificationSound(named: UNNotificationSoundName(rawValue: "alarm_ring.wav"))
 
             let identifier = "\(alarm.id.uuidString)-\(components.year ?? 0)-\(components.month ?? 0)-\(components.day ?? 0)"
             let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
