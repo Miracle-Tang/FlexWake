@@ -26,7 +26,7 @@ struct ContentView: View {
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage("appearanceMode") private var appearanceMode = 0
 
-    private let calendar = Calendar(identifier: .gregorian)
+    private let calendar = chinaCalendar()
 
     var body: some View {
         Group {
@@ -151,8 +151,8 @@ struct ContentView: View {
             }
             .navigationTitle(alarm == nil ? "新增闹钟" : "编辑闹钟")
             .onAppear {
-                // 编辑已有闹钟时，将其属性同步到 State 变量
                 if let alarm {
+                    // 编辑已有闹钟时，将其属性同步到 State 变量
                     newTitle = alarm.title
                     newHour = alarm.hour
                     newMinute = alarm.minute
@@ -161,6 +161,16 @@ struct ContentView: View {
                     newSnoozeDuration = alarm.snoozeDuration
                     newSoundName = alarm.soundName
                     newVibrationEnabled = alarm.vibrationEnabled
+                } else {
+                    // 新增闹钟时，重置为默认值，避免残留上次编辑的数据
+                    newTitle = "起床闹钟"
+                    newHour = 6
+                    newMinute = 55
+                    newRepeatMode = .fiveHalfDaysTiaoxiu
+                    newSnoozeEnabled = true
+                    newSnoozeDuration = 9
+                    newSoundName = "晨光"
+                    newVibrationEnabled = true
                 }
             }
             .toolbar {
@@ -849,11 +859,15 @@ struct CustomCalendarView: View {
         }
     }
     
+    private static let monthFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy年 M月"
+        f.locale = Locale(identifier: "zh_CN")
+        return f
+    }()
+
     private func monthYearString(from date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy年 M月"
-        formatter.locale = Locale(identifier: "zh_CN")
-        return formatter.string(from: date)
+        Self.monthFormatter.string(from: date)
     }
     
     private func generateDaysForMonth(_ monthStart: Date) -> [Date] {

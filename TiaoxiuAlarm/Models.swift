@@ -109,7 +109,7 @@ struct AlarmModel: Identifiable, Hashable, Codable {
         guard isEnabled else { return false }
         
         // 1. Check custom overrides
-        let calendar = Calendar.current
+        let calendar = chinaCalendar()
         if let custom = customDates.first(where: { calendar.isDate($0.date, inSameDayAs: date) }) {
             return custom.kind == .workday
         }
@@ -144,6 +144,7 @@ struct AlarmModel: Identifiable, Hashable, Codable {
         case (.makeupWorkday, true): return "调休补班，已唤醒"
         case (.normalWorkday, true): return "正常工作日，会响铃"
         case (.normalWeekend, false): return "常规周末，不响铃"
+        case (.normalWeekend, true): return "工作日（含周六），会响铃"
         default: return ring ? "会响铃" : "不会响铃"
         }
     }
