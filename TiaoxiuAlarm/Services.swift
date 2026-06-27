@@ -3,12 +3,32 @@ import SwiftUI
 import Combine
 import UserNotifications
 
+// MARK: - 共享工具
+
+/// 统一配置的中国时区日历，避免各处重复创建
+func chinaCalendar() -> Calendar {
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
+    return cal
+}
+
+// MARK: - HolidayManager
+
 struct HolidayManager {
     static let shared = HolidayManager()
 
     private let calendar: Calendar
     private let holidayDates: Set<String>
     private let makeupDates: Set<String>
+
+    /// 缓存的 DateFormatter，避免在循环中反复创建
+    private static let keyFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
 
     init(calendar: Calendar = Calendar(identifier: .gregorian)) {
         var cal = calendar
@@ -41,20 +61,21 @@ struct HolidayManager {
         if holidayDates.contains(key) { return .officialHoliday }
         if makeupDates.contains(key) { return .makeupWorkday }
         let weekday = calendar.component(.weekday, from: date)
-        return weekday == 1 ? .normalWeekend : .normalWorkday
+        // 周日(1)和周六(7)均为周末
+        return (weekday == 1 || weekday == 7) ? .normalWeekend : .normalWorkday
     }
 
     func nextRingDate(for alarm: AlarmModel, customDates: [CustomDateItem] = []) -> Date? {
         guard alarm.isEnabled else { return nil }
-        let calendar = configuredCalendar()
+        let cal = chinaCalendar()
         let now = Date()
         for dayOffset in 0..<45 {
-            guard let candidateDay = calendar.date(byAdding: .day, value: dayOffset, to: now) else { continue }
+            guard let candidateDay = cal.date(byAdding: .day, value: dayOffset, to: now) else { continue }
             guard alarm.shouldRing(on: candidateDay, customDates: customDates) else { continue }
-            var components = calendar.dateComponents([.year, .month, .day], from: candidateDay)
+            var components = cal.dateComponents([.year, .month, .day], from: candidateDay)
             components.hour = alarm.hour
             components.minute = alarm.minute
-            guard let candidate = calendar.date(from: components), candidate >= now else { continue }
+            guard let candidate = cal.date(from: components), candidate >= now else { continue }
             return candidate
         }
         return nil
@@ -70,29 +91,17 @@ struct HolidayManager {
     }
 
     func allPresetRules() -> [HolidayRule] {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "yyyy-MM-dd"
-        let holidays = holidayDates.compactMap { formatter.date(from: $0) }.map { HolidayRule(date: $0, kind: .officialHoliday, note: "法定放假") }
-        let makeup = makeupDates.compactMap { formatter.date(from: $0) }.map { HolidayRule(date: $0, kind: .makeupWorkday, note: "调休补班") }
+        let holidays = holidayDates.compactMap { Self.keyFormatter.date(from: $0) }.map { HolidayRule(date: $0, kind: .officialHoliday, note: "法定放假") }
+        let makeup = makeupDates.compactMap { Self.keyFormatter.date(from: $0) }.map { HolidayRule(date: $0, kind: .makeupWorkday, note: "调休补班") }
         return (holidays + makeup).sorted { $0.date < $1.date }
     }
 
-    private func configuredCalendar() -> Calendar {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
-        return cal
-    }
-
     private func formatKey(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
+        Self.keyFormatter.string(from: date)
     }
 }
+
+// MARK: - CustomDateStore
 
 final class CustomDateStore: ObservableObject {
     @Published var items: [CustomDateItem] { didSet { save() } }
@@ -124,6 +133,8 @@ final class CustomDateStore: ObservableObject {
     }
 }
 
+// MARK: - AlarmStore
+
 final class AlarmStore: ObservableObject {
     @Published var alarms: [AlarmModel] { didSet { save() } }
 
@@ -154,8 +165,13 @@ final class AlarmStore: ObservableObject {
     }
 }
 
+// MARK: - NotificationManager
+
 final class NotificationManager {
     static let shared = NotificationManager()
+
+    /// iOS 单个 App 最多 64 条待触发本地通知，预留 4 条余量
+    private static let maxPendingNotifications = 60
 
     func requestAuthorization() async -> Bool {
         do { return try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) }
@@ -165,12 +181,28 @@ final class NotificationManager {
     func refreshSchedules(from alarms: [AlarmModel], customDates: [CustomDateItem]) {
         let center = UNUserNotificationCenter.current()
         center.removeAllPendingNotificationRequests()
-        alarms.filter { $0.isEnabled }.forEach { scheduleSmartNotifications(for: $0, customDates: customDates) }
+
+        // 收集全部待排通知，按触发时间排序后截取前 N 条，防止超出 iOS 64 条上限
+        var allItems: [(fireDate: Date, request: UNNotificationRequest)] = []
+        for alarm in alarms where alarm.isEnabled {
+            allItems.append(contentsOf: buildNotificationItems(for: alarm, customDates: customDates))
+        }
+        allItems.sort { $0.fireDate < $1.fireDate }
+
+        for item in allItems.prefix(Self.maxPendingNotifications) {
+            center.add(item.request) { error in
+                if let error {
+                    print("[FlexWake] 通知排程失败: \(error.localizedDescription)")
+                }
+            }
+        }
     }
 
-    private func scheduleSmartNotifications(for alarm: AlarmModel, customDates: [CustomDateItem]) {
-        let calendar = configuredCalendar()
+    private func buildNotificationItems(for alarm: AlarmModel, customDates: [CustomDateItem]) -> [(fireDate: Date, request: UNNotificationRequest)] {
+        let calendar = chinaCalendar()
         let now = Date()
+        var items: [(fireDate: Date, request: UNNotificationRequest)] = []
+
         for dayOffset in 0..<45 {
             guard let targetDate = calendar.date(byAdding: .day, value: dayOffset, to: now) else { continue }
             guard alarm.shouldRing(on: targetDate, customDates: customDates) else { continue }
@@ -178,19 +210,17 @@ final class NotificationManager {
             components.hour = alarm.hour
             components.minute = alarm.minute
             guard let fireDate = calendar.date(from: components), fireDate >= now else { continue }
+
             let content = UNMutableNotificationContent()
             content.title = alarm.title
             content.body = HolidayManager.shared.dayDescription(for: targetDate, customDates: customDates)
             content.sound = .default
-            let identifier = "\(alarm.id.uuidString)-\(components.year ?? 0)-\(components.month ?? 0)-\(components.day ?? 0)"
-            let request = UNNotificationRequest(identifier: identifier, content: content, trigger: UNCalendarNotificationTrigger(dateMatching: components, repeats: false))
-            UNUserNotificationCenter.current().add(request)
-        }
-    }
 
-    private func configuredCalendar() -> Calendar {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
-        return cal
+            let identifier = "\(alarm.id.uuidString)-\(components.year ?? 0)-\(components.month ?? 0)-\(components.day ?? 0)"
+            let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+            let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+            items.append((fireDate: fireDate, request: request))
+        }
+        return items
     }
 }

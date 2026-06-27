@@ -102,34 +102,25 @@ struct ContentView: View {
     }
 
     private func alarmEditorView(existing alarm: AlarmModel? = nil) -> some View {
-        let title = Binding(get: { alarm?.title ?? newTitle }, set: { newTitle = $0 })
-        let hour = Binding(get: { alarm?.hour ?? newHour }, set: { newHour = $0 })
-        let minute = Binding(get: { alarm?.minute ?? newMinute }, set: { newMinute = $0 })
-        let mode = Binding(get: { alarm?.repeatMode ?? newRepeatMode }, set: { newRepeatMode = $0 })
-
-        let snoozeEnabled = Binding(get: { alarm?.snoozeEnabled ?? newSnoozeEnabled }, set: { newSnoozeEnabled = $0 })
-        let snoozeDuration = Binding(get: { alarm?.snoozeDuration ?? newSnoozeDuration }, set: { newSnoozeDuration = $0 })
-        let soundName = Binding(get: { alarm?.soundName ?? newSoundName }, set: { newSoundName = $0 })
-        let vibrationEnabled = Binding(get: { alarm?.vibrationEnabled ?? newVibrationEnabled }, set: { newVibrationEnabled = $0 })
-
+        // Bindings 统一读写 newXxx State 变量，通过 onAppear 初始化已有闹钟的值
         let timeBinding = Binding<Date>(
             get: {
                 var components = DateComponents()
-                components.hour = hour.wrappedValue
-                components.minute = minute.wrappedValue
+                components.hour = newHour
+                components.minute = newMinute
                 return calendar.date(from: components) ?? Date()
             },
             set: { newDate in
                 let comps = calendar.dateComponents([.hour, .minute], from: newDate)
-                hour.wrappedValue = comps.hour ?? 0
-                minute.wrappedValue = comps.minute ?? 0
+                newHour = comps.hour ?? 0
+                newMinute = comps.minute ?? 0
             }
         )
 
         return NavigationStack {
             Form {
                 Section("闹钟名称") {
-                    TextField("标题", text: title)
+                    TextField("标题", text: $newTitle)
                 }
                 Section("设定时间") {
                     DatePicker("", selection: timeBinding, displayedComponents: .hourAndMinute)
@@ -138,42 +129,55 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
                 Section("重复模式") {
-                    Picker("", selection: mode) {
+                    Picker("", selection: $newRepeatMode) {
                         ForEach(AlarmModel.RepeatMode.allCases) { Text($0.rawValue).tag($0) }
                     }
                     .pickerStyle(.inline)
                 }
-                Section("铃声与提醒") {
-                    Picker("铃声", selection: soundName) {
+                Section(header: Text("铃声与提醒"), footer: Text("铃声选项仅作标记，实际推送使用系统默认铃声。振动跟随系统设置。")) {
+                    Picker("铃声", selection: $newSoundName) {
                         ForEach(["晨光", "溪流", "鸟鸣", "经典", "微风"], id: \.self) {
                             Text($0).tag($0)
                         }
                     }
-                    Toggle("振动", isOn: vibrationEnabled)
-                    Toggle("稍后提醒", isOn: snoozeEnabled)
-                    if snoozeEnabled.wrappedValue {
-                        Stepper(value: snoozeDuration, in: 1...30) {
-                            Text("稍后提醒间隔：\(snoozeDuration.wrappedValue) 分钟")
+                    Toggle("振动", isOn: $newVibrationEnabled)
+                    Toggle("稍后提醒", isOn: $newSnoozeEnabled)
+                    if newSnoozeEnabled {
+                        Stepper(value: $newSnoozeDuration, in: 1...30) {
+                            Text("稍后提醒间隔：\(newSnoozeDuration) 分钟")
                         }
                     }
                 }
             }
             .navigationTitle(alarm == nil ? "新增闹钟" : "编辑闹钟")
+            .onAppear {
+                // 编辑已有闹钟时，将其属性同步到 State 变量
+                if let alarm {
+                    newTitle = alarm.title
+                    newHour = alarm.hour
+                    newMinute = alarm.minute
+                    newRepeatMode = alarm.repeatMode
+                    newSnoozeEnabled = alarm.snoozeEnabled
+                    newSnoozeDuration = alarm.snoozeDuration
+                    newSoundName = alarm.soundName
+                    newVibrationEnabled = alarm.vibrationEnabled
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismissEditor() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
                         let newAlarm = AlarmModel(
                             id: alarm?.id ?? UUID(),
-                            hour: hour.wrappedValue,
-                            minute: minute.wrappedValue,
+                            hour: newHour,
+                            minute: newMinute,
                             isEnabled: alarm?.isEnabled ?? true,
-                            repeatMode: mode.wrappedValue,
-                            title: title.wrappedValue.isEmpty ? "未命名闹钟" : title.wrappedValue,
-                            snoozeEnabled: snoozeEnabled.wrappedValue,
-                            snoozeDuration: snoozeDuration.wrappedValue,
-                            soundName: soundName.wrappedValue,
-                            vibrationEnabled: vibrationEnabled.wrappedValue
+                            repeatMode: newRepeatMode,
+                            title: newTitle.isEmpty ? "未命名闹钟" : newTitle,
+                            snoozeEnabled: newSnoozeEnabled,
+                            snoozeDuration: newSnoozeDuration,
+                            soundName: newSoundName,
+                            vibrationEnabled: newVibrationEnabled
                         )
                         if let alarm, let idx = alarmStore.alarms.firstIndex(where: { $0.id == alarm.id }) {
                             alarmStore.alarms[idx] = newAlarm
@@ -279,14 +283,14 @@ struct ContentView: View {
                                 .font(.system(size: 9, weight: .bold))
                                 .foregroundColor(.white)
                                 .frame(width: 14, height: 14)
-                                .background(Color(red: 255/255, green: 90/255, blue: 95/255))
+                                .background(DayKind.officialHoliday.tint)
                                 .clipShape(Circle())
                         } else if dayType == .makeupWorkday {
                             Text("班")
                                 .font(.system(size: 9, weight: .bold))
                                 .foregroundColor(.white)
                                 .frame(width: 14, height: 14)
-                                .background(Color(red: 0/255, green: 168/255, blue: 204/255))
+                                .background(DayKind.makeupWorkday.tint)
                                 .clipShape(Circle())
                         } else {
                             Color.clear
@@ -683,12 +687,16 @@ struct ContentView: View {
         }
     }
 
+    private static let displayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.dateStyle = .medium
+        f.locale = Locale(identifier: "zh_CN")
+        return f
+    }()
+
     private func formattedDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.dateStyle = .medium
-        formatter.locale = Locale(identifier: "zh_CN")
-        return formatter.string(from: date)
+        Self.displayFormatter.string(from: date)
     }
 
     private func metricPill(title: String, value: String, tint: Color) -> some View {
@@ -805,14 +813,14 @@ struct CustomCalendarView: View {
                                     .font(.system(size: 9, weight: .bold))
                                     .foregroundColor(.white)
                                     .frame(width: 14, height: 14)
-                                    .background(Color(red: 255/255, green: 90/255, blue: 95/255))
+                                    .background(DayKind.officialHoliday.tint)
                                     .clipShape(Circle())
                             } else if dayKind == .makeupWorkday {
                                 Text("班")
                                     .font(.system(size: 9, weight: .bold))
                                     .foregroundColor(.white)
                                     .frame(width: 14, height: 14)
-                                    .background(Color(red: 0/255, green: 168/255, blue: 204/255))
+                                    .background(DayKind.makeupWorkday.tint)
                                     .clipShape(Circle())
                             } else {
                                 Color.clear
